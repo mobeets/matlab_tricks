@@ -1,14 +1,13 @@
-function [Phatfcn, PhatfcnAlt] = ksdensity_nd(Xtrain, h, Kfcn)
+function Phatfcn = ksdensity_nd(Xtrain, h, Kfcn)
 % Xtrain [n x d] - training data
 % h - bandwidth
 % Kfcn - Kernel function (default: RBF) (alt example: @normpdf)
 %
 % returns:
-%     Phatfcn (vectorized, if RBF)
-%     Phatfcnalt (for large Xtest)
+%     Phatfcn - p-hat (if RBF: vectorized and evaluated in blocks)
 % 
-    if nargin < 2
-        h = 1;
+    if nargin < 2 || isnan(h)
+        h = defaultBandwidth(Xtrain);
     end
     if nargin < 3
         doRBF = true;
@@ -16,10 +15,9 @@ function [Phatfcn, PhatfcnAlt] = ksdensity_nd(Xtrain, h, Kfcn)
         doRBF = false;
     end
     
-    if doRBF        
-        Phatfcn = @(Xtest) mean(RBFKernel(Xtrain, Xtest, h));
+    if doRBF
         Phat = @(x) mean(RBFKernel(Xtrain, x, h));
-        PhatfcnAlt = blockEvalFcn(Phat, size(Xtrain,1));
+        Phatfcn = blockEvalFcn(Phat, size(Xtrain,1));
         return;
     end
 
@@ -27,8 +25,12 @@ function [Phatfcn, PhatfcnAlt] = ksdensity_nd(Xtrain, h, Kfcn)
     K = @(X,h) h^(-size(X,2))*Kfcn(sqrt(sum(X.^2, 2))/h);
     Phat = @(x) mean(K(bsxfun(@plus, Xtrain, -x), h));
     Phatfcn = unvectorizedFcn(Phat);
-    PhatfcnAlt = Phatfcn;
 
+end
+
+function h = defaultBandwidth(Xtrain)
+    h = median(abs(bsxfun(@plus, Xtrain, -median(Xtrain)))) / 0.6745;
+    h = median(h); % can't yet set bandwidth for each dimension
 end
 
 function fcn = unvectorizedFcn(Phat)
@@ -37,15 +39,19 @@ function fcn = unvectorizedFcn(Phat)
 end
 
 function fcn = blockEvalFcn(Phat, nTrPts)
-% vectorized p-hat function in blocks
+% vectorized p-hat function, evaluated in blocks
     fcn = @(Xtest) innerBlkEvalFcn(Phat, Xtest, nTrPts);
 end
 
 function P = innerBlkEvalFcn(Phat, pts, nTrPts)
 
-    maxArrSize = 1e5;
+    maxArrSize = 1e8;
     curArrSize = size(pts,1)*nTrPts;
     nbins = ceil(curArrSize/maxArrSize);
+    if nbins == 1
+        P = Phat(pts)';
+        return;
+    end
     
     P = nan(size(pts,1),1);
     bins = round(linspace(1, size(pts,1), nbins));
